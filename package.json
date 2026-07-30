@@ -1,13 +1,16 @@
 {
   "name": "runway-style-platform",
   "private": true,
-  "packageManager": "pnpm@10",
+  "packageManager": "pnpm@10.32.1",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
     "bootstrap": "pnpm install",
-    "mobile": "pnpm --filter runway-mobile start"
+    "mobile": "pnpm --filter @runway/mobile start"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2"
   }
 }
