@@ -1,0 +1,13 @@
+{
+  "name": "runway-style-platform",
+  "private": true,
+  "packageManager": "pnpm@10",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "bootstrap": "pnpm install",
+    "mobile": "pnpm --filter runway-mobile start"
+  }
+}
