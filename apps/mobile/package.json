@@ -13,6 +13,9 @@
   },
   "dependencies": {
     "@expo/ui": "~57.0.8",
+    "@runway/shared": "workspace:*",
+    "@runway/types": "workspace:*",
+    "@runway/ui": "workspace:*",
     "expo": "~57.0.9",
     "expo-constants": "~57.0.8",
     "expo-device": "~57.0.1",
