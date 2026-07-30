@@ -1,76 +1,18 @@
-# Node / TypeScript / React Native / Expo / NestJS .gitignore
-
-# Node
+.DS_Store
 node_modules/
+.env
+.env.local
+.env.*.local
+.expo/
+.expo-cache/
+android/
+ios/
+build/
+dist/
+coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-package-lock.json
-yarn.lock
-.pnp.*
-
-# Dist/build
-dist/
-build/
-.next/
-out/
-.venv/
-
-# TypeScript
-*.tsbuildinfo
-
-# Env
-.env
-.env.local
-.env.*.local
-
-# Editor/IDE
 .vscode/
-.idea/
-*.sublime-workspace
-*.sublime-project
-
-# Mac
-.DS_Store
-
-# React Native / Expo
-android/
-ios/
-.expo/
-.expo-shared/
-.expo-shared/assets.json
-.expo-shared/*
-*.keystore
-
-# Xcode
-*.xcworkspace
-*.xcuserdata
-*.xcodeproj/project.xcworkspace/
-
-# Gradle
-.gradle/
-**/build/
-
-# NestJS
-dist/
-coverage/
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-
-# Testing
-coverage/
-.nyc_output/
-
-# Misc
-*.env
-
-# Local packages
-packages/*/node_modules/
-
-# Lockfiles
-pnpm-lock.yaml
-
+*.swp
