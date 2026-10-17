@@ -11,8 +11,25 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     slug,
     platforms: ["ios", "android", "web"],
     version: "1.0.0",
+    plugins: [
+      ...(config.plugins ?? []),
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          photosPermission: "Runway Style uses photos you choose for your avatar.",
+          cameraPermission: false,
+          microphonePermission: false,
+        },
+      ],
+    ],
     extra: {
+      ...config.extra,
       env,
+      apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "",
+      supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? "",
+      supabasePublishableKey:
+        process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
     },
   };
 };

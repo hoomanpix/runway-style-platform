@@ -10,10 +10,10 @@ export default function OnboardingScreen() {
       <Card style={styles.card}>
         <Text style={styles.title}>Create Your Avatar</Text>
         <Text style={styles.body}>
-          Follow a simple flow: welcome, photo guide, upload, process, and studio.
+          Sign in and upload four photo views. Avatar generation is a separate step and is not available yet.
         </Text>
 
-        <Link href="/upload" asChild>
+        <Link href="/onboarding/photo-guide" asChild>
           <Button title="Continue" />
         </Link>
       </Card>

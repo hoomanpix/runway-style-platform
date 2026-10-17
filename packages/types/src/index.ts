@@ -5,3 +5,6 @@ export interface User {
   email: string;
   createdAt: Date;
 }
+
+export * from "./avatar";
+export * from "./product";

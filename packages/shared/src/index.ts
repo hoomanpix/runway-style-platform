@@ -3,3 +3,5 @@ export function isDefined<T>(
 ): value is T {
   return value !== undefined && value !== null;
 }
+
+export * from "./avatar/photo-validation";

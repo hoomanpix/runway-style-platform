@@ -1,0 +1,22 @@
+{
+  "name": "@runway/api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "start": "node --env-file=../../.env --experimental-strip-types src/server.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@runway/shared": "workspace:*",
+    "@runway/types": "workspace:*",
+    "@supabase/supabase-js": "^2.118.0",
+    "busboy": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/busboy": "^1.5.5",
+    "typescript": "~6.0.3"
+  }
+}

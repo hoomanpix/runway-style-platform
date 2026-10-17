@@ -10,7 +10,7 @@ export default function PhotoGuideScreen() {
       <Card style={styles.card}>
         <Text style={styles.title}>Photo Guide</Text>
         <Text style={styles.body}>
-          Use clear front-facing photos with good lighting and no heavy filters.
+          Choose clear front, left-side, right-side, and back photos with good lighting and no heavy filters. You can replace selections before uploading.
         </Text>
 
         <Link href="/upload" asChild>

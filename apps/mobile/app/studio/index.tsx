@@ -8,7 +8,9 @@ export default function StudioScreen() {
     <View style={styles.screen}>
       <Card style={styles.card}>
         <Text style={styles.title}>Avatar Studio</Text>
-        <Text style={styles.body}>This will become the main workspace for your generated avatar.</Text>
+        <Text style={styles.body}>
+          Avatar generation is not available yet. No avatar has been created.
+        </Text>
       </Card>
     </View>
   );
