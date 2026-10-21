@@ -27,6 +27,7 @@ export class AvatarGenerationWorker {
   private readonly workerId: string;
   private readonly fetcher: typeof fetch;
   private readonly pollDelayMs: number;
+  private readonly outputTimeoutMs: number;
 
   constructor(
     repository: GenerationWorkerRepository,
@@ -35,6 +36,7 @@ export class AvatarGenerationWorker {
     workerId = `avatar-worker-${randomUUID()}`,
     fetcher: typeof fetch = fetch,
     pollDelayMs = 2_000,
+    outputTimeoutMs = 30_000,
   ) {
     this.repository = repository;
     this.storage = storage;
@@ -42,6 +44,7 @@ export class AvatarGenerationWorker {
     this.workerId = workerId;
     this.fetcher = fetcher;
     this.pollDelayMs = pollDelayMs;
+    this.outputTimeoutMs = outputTimeoutMs;
   }
 
   async runOnce(): Promise<boolean> {
@@ -87,10 +90,20 @@ export class AvatarGenerationWorker {
         await this.fail(job, "This demo only accepts a generated 2D avatar image.", false);
         return true;
       }
-      const output = await downloadGeneratedImage(
-        this.provider.downloadOutput ? () => this.provider!.downloadOutput!(submission.outputUrl!) : this.fetcher,
-        submission.outputUrl,
-      );
+      const outputController = new AbortController();
+      const outputTimeout = setTimeout(() => outputController.abort(), this.outputTimeoutMs);
+      let output: Awaited<ReturnType<typeof downloadGeneratedImage>>;
+      try {
+        output = await downloadGeneratedImage(
+          this.provider.downloadOutput
+            ? (url, init) => this.provider!.downloadOutput!(url, init.signal as AbortSignal)
+            : this.fetcher,
+          submission.outputUrl,
+          outputController.signal,
+        );
+      } finally {
+        clearTimeout(outputTimeout);
+      }
       ensureLease();
       const stored = await this.storage.uploadGeneratedMedia({
         ownerId: job.ownerId,
@@ -150,16 +163,64 @@ export class AvatarGenerationWorker {
   }
 }
 
-async function downloadGeneratedImage(fetcher: typeof fetch, url: string): Promise<{ contentType: "image/jpeg" | "image/png"; bytes: Uint8Array }> {
-  const response = await fetcher(url, { signal: AbortSignal.timeout(30_000) });
+type OutputFetcher = (url: string, init: RequestInit) => Promise<Response>;
+
+async function downloadGeneratedImage(
+  fetcher: OutputFetcher,
+  url: string,
+  signal: AbortSignal,
+): Promise<{ contentType: "image/jpeg" | "image/png"; bytes: Uint8Array }> {
+  const response = await fetcher(url, { signal });
   if (!response.ok) throw new Error("The provider output could not be downloaded.");
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "image/jpeg" && contentType !== "image/png") throw new Error("The provider output format is not supported.");
-  const length = Number(response.headers.get("content-length") ?? 0);
-  if (Number.isFinite(length) && length > MAX_OUTPUT_BYTES) throw new Error("The provider output is too large.");
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const lengthHeader = response.headers.get("content-length");
+  const length = lengthHeader === null ? null : Number(lengthHeader);
+  if (length !== null && Number.isSafeInteger(length) && length > MAX_OUTPUT_BYTES) throw new Error("The provider output is too large.");
+  if (!response.body) throw new Error("The provider output body is missing.");
+  const bytes = await readBoundedBody(response.body, MAX_OUTPUT_BYTES, signal);
   if (bytes.byteLength === 0 || bytes.byteLength > MAX_OUTPUT_BYTES || !hasImageSignature(contentType, bytes)) throw new Error("The provider output is not a valid image.");
   return { contentType, bytes };
+}
+
+async function readBoundedBody(body: ReadableStream<Uint8Array>, maxBytes: number, signal: AbortSignal): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let abortHandler: (() => void) | undefined;
+  try {
+    const read = (async () => {
+      while (true) {
+        if (signal.aborted) throw new Error("The provider output download timed out.");
+        const result = await reader.read();
+        if (result.done) return;
+        total += result.value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel("The provider output is too large.");
+          throw new Error("The provider output is too large.");
+        }
+        chunks.push(result.value);
+      }
+    })();
+    const aborted = new Promise<never>((_, reject) => {
+      abortHandler = () => {
+        void reader.cancel("The provider output download timed out.");
+        reject(new Error("The provider output download timed out."));
+      };
+      signal.addEventListener("abort", abortHandler, { once: true });
+    });
+    await Promise.race([read, aborted]);
+  } finally {
+    if (abortHandler) signal.removeEventListener("abort", abortHandler);
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 function hasImageSignature(contentType: "image/jpeg" | "image/png", bytes: Uint8Array): boolean {
@@ -169,13 +230,13 @@ function hasImageSignature(contentType: "image/jpeg" | "image/png", bytes: Uint8
 
 function safeError(error: unknown): string {
   if (error instanceof GenerationLeaseLostError) return "The generation worker lease expired.";
-  if (error instanceof Error && /timeout|timed out/i.test(error.message)) return "The generation provider timed out.";
+  if (error instanceof Error && (error.name === "AbortError" || /aborted|timeout|timed out/i.test(error.message))) return "The generation provider timed out.";
   if (error instanceof Error && /download|output/i.test(error.message)) return "The generated image could not be downloaded or verified.";
   return "Avatar generation failed while contacting the provider.";
 }
 
 function isRetryable(error: unknown): boolean {
-  return error instanceof Error && /(temporarily|timeout|could not be reached|downloaded)/i.test(error.message);
+  return error instanceof Error && /(aborted|temporarily|timeout|could not be reached|downloaded)/i.test(error.message);
 }
 
 function delay(ms: number): Promise<void> {

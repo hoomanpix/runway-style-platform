@@ -85,6 +85,7 @@ declare
   claimed_id uuid;
   claimed_avatar_id uuid;
   claimed_owner_id uuid;
+  expired_job record;
 begin
   if coalesce((select auth.jwt() ->> 'role'), '') <> 'service_role' then
     raise exception 'service role required' using errcode = '42501';
@@ -92,10 +93,20 @@ begin
   if p_worker_id is null or length(p_worker_id) not between 1 and 120 then
     raise exception 'invalid worker id' using errcode = '22023';
   end if;
-  update public.generation_jobs set status = 'failed', safe_error = 'The job exceeded its retry limit.',
-    locked_by = null, locked_until = null, completed_at = pg_catalog.now(), updated_at = pg_catalog.now()
-  where kind = 'avatar_generation' and status = 'processing'
-    and locked_until < pg_catalog.now() and attempts >= max_attempts;
+  for expired_job in
+    select j.id, j.avatar_id, j.owner_id
+    from public.generation_jobs j
+    where j.kind = 'avatar_generation' and j.status = 'processing'
+      and j.locked_until < pg_catalog.now() and j.attempts >= j.max_attempts
+    order by j.created_at
+    for update skip locked
+  loop
+    update public.generation_jobs set status = 'failed', safe_error = 'The job exceeded its retry limit.',
+      locked_by = null, locked_until = null, completed_at = pg_catalog.now(), updated_at = pg_catalog.now()
+    where id = expired_job.id;
+    update public.avatars set status = 'failed', updated_at = pg_catalog.now()
+    where id = expired_job.avatar_id and owner_id = expired_job.owner_id;
+  end loop;
   select j.id, j.avatar_id, j.owner_id into claimed_id, claimed_avatar_id, claimed_owner_id
   from public.generation_jobs j
   where j.kind = 'avatar_generation' and j.attempts < j.max_attempts
