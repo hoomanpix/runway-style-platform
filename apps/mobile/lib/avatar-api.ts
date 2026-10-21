@@ -3,6 +3,7 @@ import type {
   AvatarId,
   AvatarPhotoContentType,
   AvatarPhotoView,
+  CreateAvatarGenerationResponse,
   CreateAvatarResponse,
   GetAvatarResponse,
   UploadAvatarPhotoResponse,
@@ -55,6 +56,10 @@ const SAFE_ERROR_MESSAGES: Partial<Record<AvatarApiErrorCode, string>> = {
   avatar_persistence_failed: "Avatar details could not be loaded. Check your connection and retry.",
   photo_storage_failed: "The photo could not be uploaded. Check your connection and retry.",
   photo_persistence_failed: "The upload could not be confirmed. Refresh the status before retrying.",
+  avatar_not_ready: "Upload all four photo views before starting generation.",
+  generation_not_configured: "Avatar generation is not configured on this server yet.",
+  generation_persistence_failed: "The generation request could not be saved. Please retry.",
+  generation_output_invalid: "The generated avatar result could not be verified.",
   service_unavailable: "The service is temporarily unavailable. Please retry shortly.",
   internal_error: "The request could not be completed. Please retry shortly.",
 };
@@ -126,6 +131,13 @@ export class AvatarApiClient {
         body: form as BodyInit,
       }
     );
+  }
+
+  startGeneration(avatarId: AvatarId, idempotencyKey: string): Promise<CreateAvatarGenerationResponse> {
+    return this.request(`/api/avatars/${encodeURIComponent(avatarId)}/generation`, {
+      method: "POST",
+      idempotencyKey,
+    });
   }
 
   private async request<T>(
