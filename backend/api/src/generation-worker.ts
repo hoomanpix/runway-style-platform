@@ -170,7 +170,8 @@ async function downloadGeneratedImage(
   url: string,
   signal: AbortSignal,
 ): Promise<{ contentType: "image/jpeg" | "image/png"; bytes: Uint8Array }> {
-  const response = await fetcher(url, { signal });
+  validateProviderOutputUrl(url);
+  const response = await fetcher(url, { signal, redirect: "error" });
   if (!response.ok) throw new Error("The provider output could not be downloaded.");
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "image/jpeg" && contentType !== "image/png") throw new Error("The provider output format is not supported.");
@@ -181,6 +182,23 @@ async function downloadGeneratedImage(
   const bytes = await readBoundedBody(response.body, MAX_OUTPUT_BYTES, signal);
   if (bytes.byteLength === 0 || bytes.byteLength > MAX_OUTPUT_BYTES || !hasImageSignature(contentType, bytes)) throw new Error("The provider output is not a valid image.");
   return { contentType, bytes };
+}
+
+function validateProviderOutputUrl(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("The provider output URL is not permitted.");
+  }
+  if (url.protocol !== "https:" || !isReplicateOutputHost(url.hostname)) {
+    throw new Error("The provider output URL is not permitted.");
+  }
+}
+
+function isReplicateOutputHost(hostname: string): boolean {
+  return hostname === "replicate.delivery" || hostname.endsWith(".replicate.delivery") ||
+    hostname === "replicate.com" || hostname.endsWith(".replicate.com");
 }
 
 async function readBoundedBody(body: ReadableStream<Uint8Array>, maxBytes: number, signal: AbortSignal): Promise<Uint8Array> {

@@ -24,7 +24,7 @@ function createRepository() {
   };
 }
 
-function createOutputWorker(fetcher, outputTimeoutMs = 30) {
+function createOutputWorker(fetcher, outputTimeoutMs = 30, outputUrl = "https://replicate.delivery/result.png") {
   const repository = {
     async claimNextAvatarGenerationJob() {
       return { id: "job-output", ownerId: owner.userId, avatarId: avatar.id, kind: "avatar_generation", status: "processing", idempotencyKey: "output-key-1", input: { photoObjectKeys: Object.fromEntries(views.map((view) => [view, `${owner.userId}/${avatar.id}/${view}.jpg`])) }, progress: 0, safeError: null, attempts: 1, updatedAt: new Date().toISOString() };
@@ -43,7 +43,7 @@ function createOutputWorker(fetcher, outputTimeoutMs = 30) {
     provider: "replicate",
     taskKind: "avatar_generation",
     configuration: { provider: "replicate", modelVersion: "model-v1", inputTemplate: {}, outputPath: ["0"], outputKind: "image_2d" },
-    async submit() { return { providerJobId: "provider-output", status: "succeeded", progress: 100, outputUrl: "https://replicate.delivery/result.png", outputKind: "image_2d", safeError: null }; },
+    async submit() { return { providerJobId: "provider-output", status: "succeeded", progress: 100, outputUrl, outputKind: "image_2d", safeError: null }; },
     async poll() { throw new Error("poll should not run for immediate success"); },
     async cancel() { throw new Error("cancel not used"); },
   };
@@ -144,4 +144,15 @@ test("worker cancels and fails a stalled output body after the full-body timeout
   await worker.runOnce();
   assert.equal(repository.completed, undefined);
   assert.match(repository.failed.safeError, /timed out/);
+});
+
+test("worker rejects an unapproved fallback output URL before fetching", async () => {
+  let calls = 0;
+  const { worker, repository } = createOutputWorker(async () => {
+    calls += 1;
+    return streamedResponse([Uint8Array.of(0x89, 0x50, 0x4e, 0x47)]);
+  }, 30, "https://evil.example/result.png");
+  await worker.runOnce();
+  assert.equal(calls, 0);
+  assert.match(repository.failed.safeError, /downloaded or verified/);
 });
