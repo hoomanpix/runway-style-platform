@@ -15,7 +15,7 @@ function context() {
     async findAvatarForOwner() { return { id: "avatar-1", ownerId: "user-1", status: "collecting_photos" }; },
     async listPhotosForOwner() { return ["front", "left", "right", "back"].map((view) => ({ id: view, avatarId: "avatar-1", ownerId: "user-1", view, contentType: "image/jpeg", byteSize: 10, contentSha256: "a".repeat(64), idempotencyKey: `${view}-key`, storageObjectKey: `user-1/avatar-1/${view}.jpg` })); },
     async findGenerationJobForOwnerByIdempotencyKey(_owner, key) { return jobs.find((job) => job.idempotencyKey === key) ?? null; },
-    async createGenerationJobForOwner(input) { const job = { id: "job-1", ownerId: input.ownerId, avatarId: input.avatarId, kind: "avatar_generation", status: "queued", idempotencyKey: input.idempotencyKey, input: input.input, progress: null, safeError: null, attempts: 0, updatedAt: new Date().toISOString() }; jobs.push(job); return job; },
+    async enqueueAvatarGenerationJob(input) { const job = { id: "job-1", ownerId: input.ownerId, avatarId: input.avatarId, kind: "avatar_generation", status: "queued", idempotencyKey: input.idempotencyKey, input: { photoObjectKeys: Object.fromEntries(["front", "left", "right", "back"].map((view) => [view, `user-1/avatar-1/${view}.jpg`])) }, progress: null, safeError: null, attempts: 0, updatedAt: new Date().toISOString() }; jobs.push(job); return job; },
   };
   return { principal: { userId: "user-1" }, repository, dependencies: { repository, storage: {} } };
 }

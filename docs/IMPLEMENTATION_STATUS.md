@@ -2,7 +2,7 @@
 
 ## Repository state
 
-The work is on feature branch `feat/avatar-generation-demo`, based on `main` at `8257adce881be107be273f46a11c98188d34964b`. The branch is intentionally not merged or pushed to `main`. No Supabase migration, live provider request, production data write, or public deployment was executed. The current environment has no Supabase URL/key, service-role key, Replicate token, approved model version, or provider template.
+The work is on working branch `fix/avatar-generation-demo-hardening`, based on the verified `main` commit `46a077c25e27b85ffc761df457a887478575650d`. The branch is intentionally not merged or pushed to `main`. No Supabase migration, live provider request, production data write, or public deployment was executed. The current environment has no Supabase URL/key, service-role key, Replicate token, approved model version, or provider template.
 
 ## Delivered on this branch
 
@@ -10,7 +10,7 @@ The backend now has an authenticated `POST /api/avatars/:avatarId/generation` en
 
 The new `generation-worker.ts` claims jobs with a lease, signs private source-photo URLs, submits and polls the configured async provider, rejects unsupported output kinds and invalid/oversized image output, writes the result to the private `generated-media` bucket, and completes the database job only after storage succeeds. Provider failures and missing configuration are converted to bounded safe job failure transitions. The Replicate adapter is used only through explicit server environment variables; no provider credential is present here.
 
-The new incremental migration `supabase/migrations/20261021000000_avatar_generation_demo.sql` expands avatar states, updates the claim function for avatar-generation jobs, and adds atomic completion/failure RPCs. It is committed as a file only; it has not been applied or verified against a Supabase project.
+The new incremental migration `supabase/migrations/20261021000000_avatar_generation_demo.sql` expands avatar states, adds an atomic owner-locked enqueue RPC, makes claim/update transitions exact, adds bounded lease renewal, hardens completion/failure ownership checks, and fixes generated-media policy output keys. It is committed as a file only; it has not been applied or verified against a Supabase project.
 
 The mobile workflow now persists a generation idempotency key, starts generation after the four photos are confirmed, polls queued/processing jobs, and renders the signed generated asset when the server reports success. The editorial web experience was not structurally changed.
 
@@ -40,7 +40,7 @@ The following commands passed after implementation:
 - `pnpm --filter @runway/mobile exec tsc --noEmit -p tsconfig.json` — PASS.
 - `pnpm --filter @runway/web build` — PASS.
 - `git diff --check` — PASS.
-- Migration structural checks for one transaction wrapper and all three generation RPC names — PASS.
+- Migration structural checks for one transaction wrapper, five generation RPC names, lease predicates, owner-scoped source keys and snake_case output policy keys — PASS.
 - `supabase --version` / `supabase db push --help` — unavailable because the Supabase CLI is not installed; no remote operation was attempted.
 
 The pre-change baseline also passed API tests/typecheck, mobile tests/typecheck, Expo web export, and web build. Mobile lint remains unverified because the repository has no ESLint configuration and automatic setup was not accepted.
@@ -53,7 +53,7 @@ Live Supabase Auth, RLS, Storage, migration execution, worker lease behavior aga
 
 ## Local demo procedure
 
-1. Create a non-production Supabase project and apply, in order, `20261016000000_avatar_pipeline.sql`, `20261017000000_fashion_jobs.sql`, and `20261021000000_avatar_generation_demo.sql`. Verify RLS, private buckets, policies and the three generation RPCs in that non-production project.
+1. Create a non-production Supabase project and apply, in order, `20261016000000_avatar_pipeline.sql`, `20261017000000_fashion_jobs.sql`, and `20261021000000_avatar_generation_demo.sql`. Verify RLS, private buckets, policies and the five generation RPCs in that non-production project.
 2. Copy `.env.example` to `.env` and fill server-only Supabase and Replicate values. Never place service-role or Replicate secrets in Expo variables.
 3. Start the API with `pnpm --filter @runway/api start` and the worker with `pnpm --filter @runway/api worker`.
 4. Configure `apps/mobile/.env` with public Supabase values and the reachable API base URL, then start Expo with `pnpm --filter @runway/mobile start`.

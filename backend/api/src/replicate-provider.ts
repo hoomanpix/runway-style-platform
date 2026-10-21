@@ -64,6 +64,32 @@ export class ReplicatePredictionClient {
     ));
   }
 
+  async downloadOutput(urlValue: string): Promise<Response> {
+    const url = new URL(urlValue);
+    if (url.protocol !== "https:" || !isReplicateOutputHost(url.hostname)) {
+      throw new ProviderRequestError(false, "The provider output URL is not permitted.");
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+    try {
+      const response = await this.fetcher(url, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${this.token}`, Accept: "image/*" },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new ProviderRequestError(response.status >= 500, "The provider output could not be downloaded.");
+      }
+      return response;
+    } catch (error) {
+      if (error instanceof ProviderRequestError) throw error;
+      if (controller.signal.aborted) throw new ProviderRequestError(true, "The provider output download timed out.");
+      throw new ProviderRequestError(true, "The provider output could not be downloaded.");
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private async request(path: string, init: RequestInit): Promise<unknown> {
     const url = new URL(path, this.baseUrl);
     if (url.protocol !== "https:" || url.hostname !== "api.replicate.com") {
@@ -136,9 +162,13 @@ export class ReplicateGenerationProvider implements AsyncGenerationProvider {
     return normalizePrediction(prediction, this.configuration);
   }
 
-  async cancel(providerJobId: string): Promise<ProviderSubmission> {
-    const prediction = await this.client.cancel(providerJobId);
+  async cancel(predictionId: string): Promise<ProviderSubmission> {
+    const prediction = await this.client.cancel(predictionId);
     return normalizePrediction(prediction, this.configuration);
+  }
+
+  async downloadOutput(url: string): Promise<Response> {
+    return this.client.downloadOutput(url);
   }
 }
 

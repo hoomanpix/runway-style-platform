@@ -16,8 +16,8 @@ function createRepository() {
     async findAvatarForOwner() { return avatar; },
     async listPhotosForOwner() { return photoList(); },
     async findGenerationJobForOwnerByIdempotencyKey(_ownerId, key) { return jobs.find((job) => job.idempotencyKey === key) ?? null; },
-    async createGenerationJobForOwner(input) {
-      const job = { id: `job-${jobs.length + 1}`, ownerId: input.ownerId, avatarId: input.avatarId, kind: "avatar_generation", status: "queued", idempotencyKey: input.idempotencyKey, input: input.input, progress: null, safeError: null, attempts: 0, updatedAt: new Date().toISOString() };
+    async enqueueAvatarGenerationJob(input) {
+      const job = { id: `job-${jobs.length + 1}`, ownerId: input.ownerId, avatarId: input.avatarId, kind: "avatar_generation", status: "queued", idempotencyKey: input.idempotencyKey, input: { photoObjectKeys: Object.fromEntries(photoList().map((photo) => [photo.view, photo.storageObjectKey])) }, progress: null, safeError: null, attempts: 0, updatedAt: new Date().toISOString() };
       jobs.push(job);
       return job;
     },
@@ -49,6 +49,7 @@ test("worker stores only a verified image output and completes the job", async (
     claimed: false,
     async claimNextAvatarGenerationJob() { if (this.claimed) return null; this.claimed = true; return { id: "job-1", ownerId: owner.userId, avatarId: avatar.id, kind: "avatar_generation", status: "processing", idempotencyKey: "generation-key-1", input: { photoObjectKeys: Object.fromEntries(views.map((view) => [view, `${owner.userId}/${avatar.id}/${view}.jpg`])) }, progress: 0, safeError: null, attempts: 1, updatedAt: new Date().toISOString() }; },
     async setGenerationProviderJob(input) { this.providerJob = input; },
+    async renewGenerationLease() { return true; },
     async completeAvatarGenerationJob(input) { this.completed = input; },
     async failAvatarGenerationJob(input) { this.failed = input; },
   };
@@ -76,6 +77,7 @@ test("worker stores only a verified image output and completes the job", async (
 test("worker fails safely when provider is not configured", async () => {
   const repository = {
     async claimNextAvatarGenerationJob() { return { id: "job-1", ownerId: owner.userId, avatarId: avatar.id, kind: "avatar_generation", status: "processing", idempotencyKey: "key-123456", input: {}, progress: 0, safeError: null, attempts: 1, updatedAt: new Date().toISOString() }; },
+    async renewGenerationLease() { return true; },
     async failAvatarGenerationJob(input) { this.failed = input; },
   };
   const worker = new AvatarGenerationWorker(repository, {}, null, "worker-1");

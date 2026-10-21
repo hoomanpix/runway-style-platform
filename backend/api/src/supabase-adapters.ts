@@ -196,19 +196,20 @@ export class SupabaseAvatarRepository implements AvatarRepository, AvatarGenerat
     return data ? mapPhoto(data) : null;
   }
 
-  async createGenerationJobForOwner(input: {
+  async enqueueAvatarGenerationJob(input: {
     ownerId: UserId;
     avatarId: string;
     idempotencyKey: string;
-    input: Record<string, unknown>;
   }): Promise<GenerationJobRecord> {
-    const { data, error } = await this.client
-      .from("generation_jobs")
-      .insert({ owner_id: input.ownerId, avatar_id: input.avatarId, kind: "avatar_generation", idempotency_key: input.idempotencyKey, input: input.input })
-      .select("id, owner_id, avatar_id, kind, status, idempotency_key, input, progress, safe_error, attempts, updated_at")
-      .single();
+    const { data, error } = await this.client.rpc("enqueue_avatar_generation_job", {
+      p_owner_id: input.ownerId,
+      p_avatar_id: input.avatarId,
+      p_idempotency_key: input.idempotencyKey,
+    });
     if (error) throw error;
-    return mapGenerationJob(data);
+    const row = data?.[0];
+    if (!row) throw new Error("The enqueue RPC returned no generation job.");
+    return mapGenerationJob(row);
   }
 
   async findGenerationJobForOwnerByIdempotencyKey(ownerId: UserId, idempotencyKey: string): Promise<GenerationJobRecord | null> {
@@ -231,13 +232,26 @@ export class SupabaseAvatarRepository implements AvatarRepository, AvatarGenerat
   }
 
   async setGenerationProviderJob(input: { jobId: string; workerId: string; provider: string; providerJobId: string }): Promise<void> {
-    const { error } = await this.client
+    const { data, error } = await this.client
       .from("generation_jobs")
       .update({ provider: input.provider, provider_job_id: input.providerJobId, updated_at: new Date().toISOString() })
       .eq("id", input.jobId)
       .eq("locked_by", input.workerId)
-      .eq("status", "processing");
+      .eq("status", "processing")
+      .gt("locked_until", new Date().toISOString())
+      .select("id");
     if (error) throw error;
+    if (!data?.length) throw new Error("The generation job lease is no longer valid.");
+  }
+
+  async renewGenerationLease(input: { jobId: string; workerId: string; leaseSeconds?: number }): Promise<boolean> {
+    const { data, error } = await this.client.rpc("renew_avatar_generation_job", {
+      p_job_id: input.jobId,
+      p_worker_id: input.workerId,
+      p_lease_seconds: input.leaseSeconds ?? 120,
+    });
+    if (error) throw error;
+    return data === true;
   }
 
   async completeAvatarGenerationJob(input: {

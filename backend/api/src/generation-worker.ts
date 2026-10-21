@@ -8,6 +8,7 @@ const SOURCE_URL_TTL_SECONDS = 300;
 
 export interface GenerationWorkerRepository {
   claimNextAvatarGenerationJob(workerId: string, leaseSeconds?: number): Promise<GenerationJobRecord | null>;
+  renewGenerationLease(input: { jobId: string; workerId: string; leaseSeconds?: number }): Promise<boolean>;
   setGenerationProviderJob(input: { jobId: string; workerId: string; provider: string; providerJobId: string }): Promise<void>;
   completeAvatarGenerationJob(input: { jobId: string; workerId: string; ownerId: UserId; avatarId: string; objectKey: string; contentType: string; provider: string; model: string }): Promise<void>;
   failAvatarGenerationJob(input: { jobId: string; workerId: string; safeError: string; retryable: boolean }): Promise<void>;
@@ -50,9 +51,22 @@ export class AvatarGenerationWorker {
       await this.fail(job, "Avatar generation is not configured on this server.", false);
       return true;
     }
+    let leaseLost = false;
+    const heartbeat = typeof this.repository.renewGenerationLease === "function"
+      ? setInterval(() => {
+          void this.repository.renewGenerationLease({ jobId: job.id, workerId: this.workerId })
+            .then((renewed) => { if (!renewed) leaseLost = true; })
+            .catch(() => { leaseLost = true; });
+        }, 30_000)
+      : undefined;
+    const ensureLease = () => {
+      if (leaseLost) throw new GenerationLeaseLostError();
+    };
     try {
       const values = await this.sourcePhotoInputs(job);
+      ensureLease();
       let submission = await this.provider.submit(values);
+      ensureLease();
       await this.repository.setGenerationProviderJob({
         jobId: job.id,
         workerId: this.workerId,
@@ -61,7 +75,9 @@ export class AvatarGenerationWorker {
       });
       while (submission.status === "queued" || submission.status === "processing") {
         await delay(this.pollDelayMs);
+        ensureLease();
         submission = await this.provider.poll(submission.providerJobId);
+        ensureLease();
       }
       if (submission.status !== "succeeded" || !submission.outputUrl) {
         await this.fail(job, submission.safeError ?? "The generation provider could not complete this request.", false);
@@ -71,7 +87,11 @@ export class AvatarGenerationWorker {
         await this.fail(job, "This demo only accepts a generated 2D avatar image.", false);
         return true;
       }
-      const output = await downloadGeneratedImage(this.fetcher, submission.outputUrl);
+      const output = await downloadGeneratedImage(
+        this.provider.downloadOutput ? () => this.provider!.downloadOutput!(submission.outputUrl!) : this.fetcher,
+        submission.outputUrl,
+      );
+      ensureLease();
       const stored = await this.storage.uploadGeneratedMedia({
         ownerId: job.ownerId,
         avatarId: job.avatarId,
@@ -96,8 +116,10 @@ export class AvatarGenerationWorker {
       }
       return true;
     } catch (error) {
-      await this.fail(job, safeError(error), isRetryable(error));
+      if (!leaseLost) await this.fail(job, safeError(error), isRetryable(error)).catch(() => undefined);
       return true;
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
     }
   }
 
@@ -146,7 +168,10 @@ function hasImageSignature(contentType: "image/jpeg" | "image/png", bytes: Uint8
 }
 
 function safeError(error: unknown): string {
-  return error instanceof Error && error.message.length > 0 ? error.message : "Avatar generation failed.";
+  if (error instanceof GenerationLeaseLostError) return "The generation worker lease expired.";
+  if (error instanceof Error && /timeout|timed out/i.test(error.message)) return "The generation provider timed out.";
+  if (error instanceof Error && /download|output/i.test(error.message)) return "The generated image could not be downloaded or verified.";
+  return "Avatar generation failed while contacting the provider.";
 }
 
 function isRetryable(error: unknown): boolean {
@@ -155,4 +180,11 @@ function isRetryable(error: unknown): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+class GenerationLeaseLostError extends Error {
+  constructor() {
+    super("The generation worker lease expired.");
+    this.name = "GenerationLeaseLostError";
+  }
 }

@@ -141,9 +141,17 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
+      enqueue_avatar_generation_job: {
+        Args: { p_owner_id: string; p_avatar_id: string; p_idempotency_key: string };
+        Returns: Database["public"]["Tables"]["generation_jobs"]["Row"][];
+      };
       claim_generation_job: {
         Args: { p_worker_id: string; p_lease_seconds?: number };
         Returns: Database["public"]["Tables"]["generation_jobs"]["Row"][];
+      };
+      renew_avatar_generation_job: {
+        Args: { p_job_id: string; p_worker_id: string; p_lease_seconds?: number };
+        Returns: boolean;
       };
       complete_avatar_generation_job: {
         Args: {
