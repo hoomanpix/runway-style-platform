@@ -10,12 +10,16 @@ import {
   getAvatar,
   uploadAvatarPhoto,
 } from "./avatar-service.ts";
+import { startAvatarGeneration } from "./generation-service.ts";
 
 const MAX_MULTIPART_OVERHEAD_BYTES = 64 * 1024;
 
-export function createAvatarHttpServer(authenticate: AccessTokenAuthenticator) {
+export function createAvatarHttpServer(
+  authenticate: AccessTokenAuthenticator,
+  options: { generationConfigured?: boolean } = {},
+) {
   const server = createServer((request, response) => {
-    void handleRequest(request, response, authenticate);
+    void handleRequest(request, response, authenticate, options);
   });
   server.headersTimeout = 15_000;
   server.requestTimeout = 30_000;
@@ -26,7 +30,8 @@ export function createAvatarHttpServer(authenticate: AccessTokenAuthenticator) {
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  authenticate: AccessTokenAuthenticator
+  authenticate: AccessTokenAuthenticator,
+  options: { generationConfigured?: boolean },
 ): Promise<void> {
   try {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -82,6 +87,18 @@ async function handleRequest(
       return;
     }
 
+    if (route.kind === "start-generation") {
+      const result = await startAvatarGeneration(
+        context.principal,
+        route.avatarId,
+        request.headers["idempotency-key"],
+        context.repository,
+        options.generationConfigured === true,
+      );
+      sendJson(response, 202, result);
+      return;
+    }
+
     const multipart = await readPhotoUpload(request);
     const result = await uploadAvatarPhoto(
       context.principal,
@@ -127,6 +144,7 @@ async function handleRequest(
 type Route =
   | { kind: "create-avatar" }
   | { kind: "get-avatar"; avatarId: string }
+  | { kind: "start-generation"; avatarId: string }
   | { kind: "upload-photo"; avatarId: string; view: string };
 
 function matchRoute(method: string | undefined, pathname: string): Route | null {
@@ -136,6 +154,10 @@ function matchRoute(method: string | undefined, pathname: string): Route | null 
   const getAvatarMatch = /^\/api\/avatars\/([^/]+)$/.exec(pathname);
   if (method === "GET" && getAvatarMatch) {
     return { kind: "get-avatar", avatarId: decodePathPart(getAvatarMatch[1]) };
+  }
+  const generationMatch = /^\/api\/avatars\/([^/]+)\/generation$/.exec(pathname);
+  if (method === "POST" && generationMatch) {
+    return { kind: "start-generation", avatarId: decodePathPart(generationMatch[1]) };
   }
   const uploadMatch = /^\/api\/avatars\/([^/]+)\/photos\/([^/]+)$/.exec(pathname);
   if (method === "POST" && uploadMatch) {

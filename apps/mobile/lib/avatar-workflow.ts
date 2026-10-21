@@ -23,6 +23,7 @@ export interface AvatarWorkflowApi {
     file: AvatarUploadFile,
     idempotencyKey: string
   ): Promise<UploadAvatarPhotoResponse>;
+  startGeneration(avatarId: AvatarId, idempotencyKey: string): Promise<{ job: NonNullable<GetAvatarResponse["generationJob"]> }>;
 }
 
 export type SelectedAvatarPhoto = AvatarUploadFile & {
@@ -129,6 +130,24 @@ export class AvatarWorkflow {
     } finally {
       this.uploadInProgress = false;
     }
+  }
+
+  async startGeneration(snapshot: GetAvatarResponse): Promise<GetAvatarResponse> {
+    if (!snapshot.generationJob && snapshot.photos.length !== AVATAR_PHOTO_VIEWS.length) {
+      throw new MissingPhotoViewsError(
+        AVATAR_PHOTO_VIEWS.filter((view) => !snapshot.photos.some((photo) => photo.view === view)),
+      );
+    }
+    if (snapshot.generationJob) return snapshot;
+    const operationKey = `${this.keyPrefix}.${snapshot.avatar.id}.generation`;
+    let idempotencyKey = await this.storage.getItem(operationKey);
+    if (!idempotencyKey) {
+      idempotencyKey = this.createIdempotencyKey();
+      await this.storage.setItem(operationKey, idempotencyKey);
+    }
+    await this.api.startGeneration(snapshot.avatar.id, idempotencyKey);
+    await this.storage.removeItem(operationKey);
+    return this.refreshUploadedViews(snapshot.avatar.id);
   }
 
   private async refreshUploadedViews(avatarId: AvatarId): Promise<GetAvatarResponse> {

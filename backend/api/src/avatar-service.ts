@@ -40,6 +40,7 @@ export interface OwnedAvatarPhotoRecord {
   byteSize: number;
   contentSha256: string;
   idempotencyKey: string;
+  storageObjectKey: string;
 }
 
 export interface OwnedAvatarAssetRecord {
@@ -160,7 +161,7 @@ export async function createAvatar(
     );
   }
 
-  if (!isOwnedAvatar(avatar, userId) || avatar.idempotencyKey !== key) {
+  if (!isOwnedAvatar(avatar, userId) || avatar.status !== "collecting_photos" || avatar.idempotencyKey !== key) {
     throw new AvatarApiError(
       "avatar_persistence_failed",
       503,
@@ -237,6 +238,13 @@ export async function uploadAvatarPhoto(
   }
   if (!avatar || avatar.ownerId !== userId || avatar.id !== input.avatarId) {
     throw new AvatarApiError("avatar_not_found", 404, "Avatar was not found.");
+  }
+  if (avatar.status !== "collecting_photos") {
+    throw new AvatarApiError(
+      "avatar_not_ready",
+      409,
+      "This avatar is already queued or generated."
+    );
   }
 
   let storedPhoto: { objectKey: string };
@@ -426,7 +434,17 @@ function isOwnedAvatar(
     typeof avatar?.id === "string" &&
     avatar.id.trim().length > 0 &&
     avatar.ownerId === ownerId &&
-    avatar.status === "collecting_photos"
+    isAvatarStatus(avatar.status)
+  );
+}
+
+function isAvatarStatus(value: AvatarStatus): boolean {
+  return (
+    value === "collecting_photos" ||
+    value === "generation_queued" ||
+    value === "generating" ||
+    value === "ready" ||
+    value === "failed"
   );
 }
 

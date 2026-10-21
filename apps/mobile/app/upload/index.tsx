@@ -51,6 +51,7 @@ export default function UploadScreen() {
   const [loadingAvatar, setLoadingAvatar] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingView, setUploadingView] = useState<AvatarPhotoView | null>(null);
+  const [generationBusy, setGenerationBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const workflowRef = useRef<AvatarWorkflow | null>(null);
@@ -113,6 +114,15 @@ export default function UploadScreen() {
       active = false;
     };
   }, [session?.user.id, configured]);
+
+  useEffect(() => {
+    const status = snapshot?.generationJob?.status;
+    if (!workflowRef.current || (status !== "queued" && status !== "processing")) return;
+    const timer = setInterval(() => {
+      void workflowRef.current?.resume().then(acceptServerSnapshot).catch((cause: unknown) => setError(messageForError(cause)));
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [snapshot?.generationJob?.status]);
 
   async function selectPhoto(view: AvatarPhotoView) {
     setError("");
@@ -225,6 +235,22 @@ export default function UploadScreen() {
     }
   }
 
+  async function generateAvatar() {
+    const workflow = workflowRef.current;
+    if (!workflow || !snapshot || generationBusy) return;
+    setGenerationBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      acceptServerSnapshot(await workflow.startGeneration(snapshot));
+      setNotice("Avatar generation has started. This screen will update when the result is ready.");
+    } catch (cause) {
+      setError(messageForError(cause));
+    } finally {
+      setGenerationBusy(false);
+    }
+  }
+
   if (authLoading) {
     return <CenteredState label="Checking your session..." />;
   }
@@ -300,7 +326,19 @@ export default function UploadScreen() {
         complete ? (
           <Card style={styles.completion}>
             <Text style={styles.completionTitle}>All photo views uploaded</Text>
-            <Text style={styles.body}>The server confirmed all four photos. Avatar generation has not started.</Text>
+            {snapshot.generationJob ? (
+              <>
+                <Text style={styles.body}>
+                  Generation status: {snapshot.generationJob.status}{snapshot.generationJob.progress !== null ? ` (${snapshot.generationJob.progress}%)` : ""}
+                </Text>
+                {snapshot.generatedAsset ? <Image source={{ uri: snapshot.generatedAsset.url }} style={styles.generatedPreview} accessibilityLabel="Generated avatar result" /> : null}
+              </>
+            ) : (
+              <>
+                <Text style={styles.body}>The server confirmed all four photos. Start the configured avatar generation provider when ready.</Text>
+                <Button title={generationBusy ? "Starting generation..." : "Generate my avatar"} disabled={generationBusy} onPress={() => void generateAvatar()} />
+              </>
+            )}
           </Card>
         ) : (
           <Button
@@ -478,6 +516,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   preview: { width: 76, height: 92, borderRadius: 8, backgroundColor: "#F2F3F5" },
+  generatedPreview: { width: "100%", height: 320, borderRadius: 12, backgroundColor: "#F2F3F5" },
   emptyPreview: {
     width: 76,
     height: 92,
