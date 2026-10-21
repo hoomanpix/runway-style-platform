@@ -11,6 +11,7 @@ import type {
 
 const REPLICATE_API_ORIGIN = "https://api.replicate.com";
 const PROVIDER_TIMEOUT_MS = 20_000;
+const MAX_OUTPUT_REDIRECTS = 3;
 
 interface ReplicatePrediction {
   id: string;
@@ -29,18 +30,28 @@ export class ProviderNotConfiguredError extends Error {
 }
 
 export class ProviderRequestError extends Error {
-  constructor(readonly retryable: boolean, message: string) {
+  readonly retryable: boolean;
+
+  constructor(retryable: boolean, message: string) {
     super(message);
+    this.retryable = retryable;
     this.name = "ProviderRequestError";
   }
 }
-
 export class ReplicatePredictionClient {
+  private readonly token: string;
+  private readonly fetcher: ProviderFetch;
+  private readonly baseUrl: string;
+
   constructor(
-    private readonly token: string,
-    private readonly fetcher: ProviderFetch = fetch,
-    private readonly baseUrl = REPLICATE_API_ORIGIN
-  ) {}
+    token: string,
+    fetcher: ProviderFetch = fetch,
+    baseUrl = REPLICATE_API_ORIGIN
+  ) {
+    this.token = token;
+    this.fetcher = fetcher;
+    this.baseUrl = baseUrl;
+  }
 
   async create(modelVersion: string, input: Record<string, JsonValue>): Promise<ReplicatePrediction> {
     const response = await this.request("/v1/predictions", {
@@ -62,6 +73,37 @@ export class ReplicatePredictionClient {
       `/v1/predictions/${encodeURIComponent(predictionId)}/cancel`,
       { method: "POST" }
     ));
+  }
+
+  async downloadOutput(urlValue: string, signal: AbortSignal): Promise<Response> {
+    let url = validateOutputUrl(urlValue);
+    for (let redirectCount = 0; redirectCount <= MAX_OUTPUT_REDIRECTS; redirectCount += 1) {
+      if (signal.aborted) throw new ProviderRequestError(true, "The provider output download timed out.");
+      const response = await this.fetcher(url, {
+        method: "GET",
+        headers: { Accept: "image/*" },
+        signal,
+        redirect: "manual",
+      });
+      if (response.status >= 300 && response.status < 400) {
+        if (redirectCount === MAX_OUTPUT_REDIRECTS) {
+          throw new ProviderRequestError(false, "The provider output redirected too many times.");
+        }
+        const location = response.headers.get("location");
+        if (!location) throw new ProviderRequestError(false, "The provider output redirect was invalid.");
+        try {
+          url = validateOutputUrl(new URL(location, url).toString());
+        } catch {
+          throw new ProviderRequestError(false, "The provider output redirect destination is not permitted.");
+        }
+        continue;
+      }
+      if (!response.ok) {
+        throw new ProviderRequestError(response.status >= 500, "The provider output could not be downloaded.");
+      }
+      return response;
+    }
+    throw new ProviderRequestError(false, "The provider output redirected too many times.");
   }
 
   private async request(path: string, init: RequestInit): Promise<unknown> {
@@ -109,14 +151,18 @@ export class ReplicatePredictionClient {
 
 export class ReplicateGenerationProvider implements AsyncGenerationProvider {
   readonly provider = "replicate" as const;
+  readonly taskKind: ProviderTaskKind;
+  readonly configuration: ReplicateTaskConfiguration;
   private readonly client: ReplicatePredictionClient;
 
   constructor(
-    readonly taskKind: ProviderTaskKind,
-    readonly configuration: ReplicateTaskConfiguration,
+    taskKind: ProviderTaskKind,
+    configuration: ReplicateTaskConfiguration,
     token: string,
     fetcher: ProviderFetch = fetch
   ) {
+    this.taskKind = taskKind;
+    this.configuration = configuration;
     this.client = new ReplicatePredictionClient(token, fetcher);
   }
 
@@ -136,9 +182,13 @@ export class ReplicateGenerationProvider implements AsyncGenerationProvider {
     return normalizePrediction(prediction, this.configuration);
   }
 
-  async cancel(providerJobId: string): Promise<ProviderSubmission> {
-    const prediction = await this.client.cancel(providerJobId);
+  async cancel(predictionId: string): Promise<ProviderSubmission> {
+    const prediction = await this.client.cancel(predictionId);
     return normalizePrediction(prediction, this.configuration);
+  }
+
+  async downloadOutput(url: string, signal: AbortSignal): Promise<Response> {
+    return this.client.downloadOutput(url, signal);
   }
 }
 
@@ -305,6 +355,19 @@ function extractOutputUrl(output: unknown, path: string[]): string | null {
 function isReplicateOutputHost(hostname: string): boolean {
   return hostname === "replicate.delivery" || hostname.endsWith(".replicate.delivery") ||
     hostname === "replicate.com" || hostname.endsWith(".replicate.com");
+}
+
+function validateOutputUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ProviderRequestError(false, "The provider output URL is not permitted.");
+  }
+  if (url.protocol !== "https:" || !isReplicateOutputHost(url.hostname)) {
+    throw new ProviderRequestError(false, "The provider output URL is not permitted.");
+  }
+  return url;
 }
 
 function parseInputTemplate(value: string, prefix: string): Record<string, JsonValue> {

@@ -31,6 +31,7 @@ export interface AsyncGenerationProvider {
   submit(values: ProviderInputValues): Promise<ProviderSubmission>;
   poll(providerJobId: string): Promise<ProviderSubmission>;
   cancel(providerJobId: string): Promise<ProviderSubmission>;
+  downloadOutput?(url: string, signal: AbortSignal): Promise<Response>;
 }
 
 export interface ProviderConfigurationStatus {

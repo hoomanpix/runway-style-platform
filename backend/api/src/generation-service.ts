@@ -2,7 +2,6 @@ import { missingAvatarPhotoViews } from "@runway/shared/avatar";
 import type {
   AvatarGenerationJobSummary,
   AvatarId,
-  AvatarPhotoView,
   AvatarStatus,
   CreateAvatarGenerationResponse,
   GenerationJobKind,
@@ -32,11 +31,10 @@ export interface AvatarGenerationRepository {
     status: AvatarStatus;
   } | null>;
   listPhotosForOwner(ownerId: UserId, avatarId: AvatarId): Promise<OwnedAvatarPhotoRecord[]>;
-  createGenerationJobForOwner(input: {
+  enqueueAvatarGenerationJob(input: {
     ownerId: UserId;
     avatarId: AvatarId;
     idempotencyKey: string;
-    input: Record<string, unknown>;
   }): Promise<GenerationJobRecord>;
   findGenerationJobForOwnerByIdempotencyKey(
     ownerId: UserId,
@@ -124,15 +122,11 @@ export async function startAvatarGeneration(
     );
   }
 
-  const photoObjectKeys = Object.fromEntries(
-    photos.map((photo) => [photo.view satisfies AvatarPhotoView, photo.storageObjectKey]),
-  );
   try {
-    const created = await repository.createGenerationJobForOwner({
+    const created = await repository.enqueueAvatarGenerationJob({
       ownerId,
       avatarId,
       idempotencyKey: key,
-      input: { photoObjectKeys },
     });
     if (
       created.ownerId !== ownerId ||
@@ -153,6 +147,11 @@ export async function startAvatarGeneration(
       } catch {
         // Keep the response independent of persistence details.
       }
+      throw new AvatarApiError(
+        "avatar_not_ready",
+        409,
+        "This avatar already has an active generation request or the idempotency key conflicts.",
+      );
     }
     throw new AvatarApiError(
       "generation_persistence_failed",

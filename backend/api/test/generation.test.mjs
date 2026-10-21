@@ -16,12 +16,47 @@ function createRepository() {
     async findAvatarForOwner() { return avatar; },
     async listPhotosForOwner() { return photoList(); },
     async findGenerationJobForOwnerByIdempotencyKey(_ownerId, key) { return jobs.find((job) => job.idempotencyKey === key) ?? null; },
-    async createGenerationJobForOwner(input) {
-      const job = { id: `job-${jobs.length + 1}`, ownerId: input.ownerId, avatarId: input.avatarId, kind: "avatar_generation", status: "queued", idempotencyKey: input.idempotencyKey, input: input.input, progress: null, safeError: null, attempts: 0, updatedAt: new Date().toISOString() };
+    async enqueueAvatarGenerationJob(input) {
+      const job = { id: `job-${jobs.length + 1}`, ownerId: input.ownerId, avatarId: input.avatarId, kind: "avatar_generation", status: "queued", idempotencyKey: input.idempotencyKey, input: { photoObjectKeys: Object.fromEntries(photoList().map((photo) => [photo.view, photo.storageObjectKey])) }, progress: null, safeError: null, attempts: 0, updatedAt: new Date().toISOString() };
       jobs.push(job);
       return job;
     },
   };
+}
+
+function createOutputWorker(fetcher, outputTimeoutMs = 30, outputUrl = "https://replicate.delivery/result.png") {
+  const repository = {
+    async claimNextAvatarGenerationJob() {
+      return { id: "job-output", ownerId: owner.userId, avatarId: avatar.id, kind: "avatar_generation", status: "processing", idempotencyKey: "output-key-1", input: { photoObjectKeys: Object.fromEntries(views.map((view) => [view, `${owner.userId}/${avatar.id}/${view}.jpg`])) }, progress: 0, safeError: null, attempts: 1, updatedAt: new Date().toISOString() };
+    },
+    async renewGenerationLease() { return true; },
+    async setGenerationProviderJob() {},
+    async completeAvatarGenerationJob(input) { this.completed = input; },
+    async failAvatarGenerationJob(input) { this.failed = input; },
+  };
+  const storage = {
+    async createSignedPhotoReadUrl({ objectKey }) { return `https://storage.example/${objectKey}`; },
+    async uploadGeneratedMedia(input) { this.upload = input; return { objectKey: `${owner.userId}/${avatar.id}/generation-output.png` }; },
+    async removeGeneratedMedia() {},
+  };
+  const provider = {
+    provider: "replicate",
+    taskKind: "avatar_generation",
+    configuration: { provider: "replicate", modelVersion: "model-v1", inputTemplate: {}, outputPath: ["0"], outputKind: "image_2d" },
+    async submit() { return { providerJobId: "provider-output", status: "succeeded", progress: 100, outputUrl, outputKind: "image_2d", safeError: null }; },
+    async poll() { throw new Error("poll should not run for immediate success"); },
+    async cancel() { throw new Error("cancel not used"); },
+  };
+  return { worker: new AvatarGenerationWorker(repository, storage, provider, "worker-output", fetcher, 0, outputTimeoutMs), repository, storage };
+}
+
+function streamedResponse(chunks, headers = {}, close = true) {
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      if (close) controller.close();
+    },
+  }), { status: 200, headers: { "content-type": "image/png", ...headers } });
 }
 
 test("requires provider configuration but preserves a replayable idempotency key", async () => {
@@ -49,6 +84,7 @@ test("worker stores only a verified image output and completes the job", async (
     claimed: false,
     async claimNextAvatarGenerationJob() { if (this.claimed) return null; this.claimed = true; return { id: "job-1", ownerId: owner.userId, avatarId: avatar.id, kind: "avatar_generation", status: "processing", idempotencyKey: "generation-key-1", input: { photoObjectKeys: Object.fromEntries(views.map((view) => [view, `${owner.userId}/${avatar.id}/${view}.jpg`])) }, progress: 0, safeError: null, attempts: 1, updatedAt: new Date().toISOString() }; },
     async setGenerationProviderJob(input) { this.providerJob = input; },
+    async renewGenerationLease() { return true; },
     async completeAvatarGenerationJob(input) { this.completed = input; },
     async failAvatarGenerationJob(input) { this.failed = input; },
   };
@@ -76,9 +112,47 @@ test("worker stores only a verified image output and completes the job", async (
 test("worker fails safely when provider is not configured", async () => {
   const repository = {
     async claimNextAvatarGenerationJob() { return { id: "job-1", ownerId: owner.userId, avatarId: avatar.id, kind: "avatar_generation", status: "processing", idempotencyKey: "key-123456", input: {}, progress: 0, safeError: null, attempts: 1, updatedAt: new Date().toISOString() }; },
+    async renewGenerationLease() { return true; },
     async failAvatarGenerationJob(input) { this.failed = input; },
   };
   const worker = new AvatarGenerationWorker(repository, {}, null, "worker-1");
   await worker.runOnce();
   assert.equal(repository.failed.retryable, false);
+});
+
+test("worker rejects an oversized streamed body without trusting Content-Length", async () => {
+  const oversized = new Uint8Array(20 * 1024 * 1024 + 1);
+  oversized.set([0x89, 0x50, 0x4e, 0x47]);
+  const { worker, repository } = createOutputWorker(async () => streamedResponse([oversized], { "content-length": "1" }));
+  await worker.runOnce();
+  assert.equal(repository.completed, undefined);
+  assert.match(repository.failed.safeError, /downloaded or verified/);
+});
+
+test("worker rejects an oversized streamed body when Content-Length is absent", async () => {
+  const first = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, ...new Uint8Array(1024));
+  const oversized = new Uint8Array(20 * 1024 * 1024);
+  const { worker, repository } = createOutputWorker(async () => streamedResponse([first, oversized]));
+  await worker.runOnce();
+  assert.equal(repository.completed, undefined);
+  assert.match(repository.failed.safeError, /downloaded or verified/);
+});
+
+test("worker cancels and fails a stalled output body after the full-body timeout", async () => {
+  const response = streamedResponse([Uint8Array.of(0x89, 0x50, 0x4e, 0x47)], {}, false);
+  const { worker, repository } = createOutputWorker(async () => response, 20);
+  await worker.runOnce();
+  assert.equal(repository.completed, undefined);
+  assert.match(repository.failed.safeError, /timed out/);
+});
+
+test("worker rejects an unapproved fallback output URL before fetching", async () => {
+  let calls = 0;
+  const { worker, repository } = createOutputWorker(async () => {
+    calls += 1;
+    return streamedResponse([Uint8Array.of(0x89, 0x50, 0x4e, 0x47)]);
+  }, 30, "https://evil.example/result.png");
+  await worker.runOnce();
+  assert.equal(calls, 0);
+  assert.match(repository.failed.safeError, /downloaded or verified/);
 });
