@@ -31,6 +31,10 @@ export interface CreateAvatarResponse {
   avatar: AvatarSummary;
 }
 
+export interface CreateAvatarGenerationResponse {
+  job: AvatarGenerationJobSummary;
+}
+
 export interface GetAvatarResponse {
   avatar: AvatarSummary;
   photos: AvatarPhotoSummary[];
@@ -76,7 +80,11 @@ export type AvatarApiErrorCode =
   | "photo_already_exists"
   | "avatar_persistence_failed"
   | "photo_storage_failed"
-  | "photo_persistence_failed";
+  | "photo_persistence_failed"
+  | "avatar_not_ready"
+  | "generation_not_configured"
+  | "generation_persistence_failed"
+  | "generation_output_invalid";
 
 export interface AvatarApiErrorResponse {
   error: {

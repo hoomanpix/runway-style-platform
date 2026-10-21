@@ -2,6 +2,7 @@ import { createAvatarHttpServer } from "./http-server.ts";
 import { readServerConfig } from "./server-config.ts";
 import { createSupabaseAuthenticator } from "./supabase-auth.ts";
 import { createServiceSupabaseClient } from "./supabase-adapters.ts";
+import { readAvatarGenerationConfiguration } from "./generation-config.ts";
 
 try {
   const config = readServerConfig();
@@ -9,8 +10,10 @@ try {
     config.supabaseUrl,
     config.supabaseServiceRoleKey
   );
+  const generation = readAvatarGenerationConfiguration();
   const server = createAvatarHttpServer(
-    createSupabaseAuthenticator(config, serviceClient)
+    createSupabaseAuthenticator(config, serviceClient),
+    { generationConfigured: generation.status.configured }
   );
   server.listen(config.port, config.host, () => {
     console.log(`Runway API listening on http://${config.host}:${config.port}`);

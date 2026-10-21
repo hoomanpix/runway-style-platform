@@ -145,6 +145,28 @@ export interface Database {
         Args: { p_worker_id: string; p_lease_seconds?: number };
         Returns: Database["public"]["Tables"]["generation_jobs"]["Row"][];
       };
+      complete_avatar_generation_job: {
+        Args: {
+          p_job_id: string;
+          p_worker_id: string;
+          p_owner_id: string;
+          p_avatar_id: string;
+          p_object_key: string;
+          p_content_type: string;
+          p_provider: string;
+          p_model: string;
+        };
+        Returns: null;
+      };
+      fail_avatar_generation_job: {
+        Args: {
+          p_job_id: string;
+          p_worker_id: string;
+          p_safe_error: string;
+          p_retryable: boolean;
+        };
+        Returns: null;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
